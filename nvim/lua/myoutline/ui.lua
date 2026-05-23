@@ -43,9 +43,11 @@ local state = nil
 
 -- ---------------------------------------------------------------- highlights
 local function ensure_highlights()
+  -- Always white border & title (overrides theme on purpose, per user request).
+  vim.api.nvim_set_hl(0, "MyOutlineBorder", { fg = "#ffffff" })
+  vim.api.nvim_set_hl(0, "MyOutlineTitle",  { fg = "#ffffff", bold = true })
+
   local defs = {
-    MyOutlineBorder       = { link = "FloatBorder" },
-    MyOutlineTitle        = { link = "FloatTitle" },
     MyOutlineGroupHeader  = { link = "Title", bold = true },
     MyOutlineSelection    = { link = "Visual" },
     MyOutlineIcon         = { link = "Special" },
@@ -211,16 +213,14 @@ local function paint_selection()
 end
 
 local function update_title()
-  if not vim.api.nvim_win_is_valid(state.popup_win) then return end
-  local total    = #state.all_items
-  local matching = #state.rendered_items
-  local title
-  if matching == total then
-    title = string.format(" Symbols (%d) ", total)
-  else
-    title = string.format(" Symbols (%d/%d) ", matching, total)
-  end
-  pcall(vim.api.nvim_win_set_config, state.popup_win, { title = title, title_pos = "center" })
+  if not state or not vim.api.nvim_win_is_valid(state.popup_win) then return end
+  local bufname = vim.api.nvim_buf_get_name(state.source_buf)
+  local tail = vim.fn.fnamemodify(bufname, ":t")
+  if tail == "" then tail = "[No Name]" end
+  pcall(vim.api.nvim_win_set_config, state.popup_win, {
+    title     = " " .. tail .. " ",
+    title_pos = "center",
+  })
 end
 
 -- ---------------------------------------------------------------- preview
@@ -465,6 +465,8 @@ function M.open(items, source_win, source_buf)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "", "" })
 
   local width, height, row, col = compute_geometry()
+  local initial_tail = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(source_buf), ":t")
+  if initial_tail == "" then initial_tail = "[No Name]" end
   local win = vim.api.nvim_open_win(buf, true, {
     relative  = "editor",
     width     = width,
@@ -473,7 +475,7 @@ function M.open(items, source_win, source_buf)
     col       = col,
     style     = "minimal",
     border    = config.options.window.border,
-    title     = " Symbols ",
+    title     = " " .. initial_tail .. " ",
     title_pos = "center",
     noautocmd = true,
   })
