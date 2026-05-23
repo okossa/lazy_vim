@@ -147,10 +147,10 @@ end
 local function apply_static_highlights(buf, line_map)
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 
-  -- Prompt: 🔍 icon is always shown inline at col 0 (virtual, can't be deleted).
+  -- Prompt: ">" marker is always shown inline at col 0 (virtual, can't be deleted).
   -- When the query is empty, a muted placeholder is shown alongside it.
   local q = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
-  local prompt_vt = { { "🔍  ", "MyOutlinePromptMark" } }
+  local prompt_vt = { { "> ", "MyOutlinePromptMark" } }
   if q == "" then
     table.insert(prompt_vt, { "Type to filter symbols…", "MyOutlinePlaceholder" })
   end
