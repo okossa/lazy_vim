@@ -7,7 +7,7 @@ return {
     dir  = vim.fn.stdpath("config"),
     name = "myoutline",
     lazy = true,
-    cmd  = { "MyOutlineOpen", "MyOutlineClose", "MyOutlineToggle", "MyOutlineDump", "MyOutlineHoverDebug" },
+    cmd  = { "MyOutlineOpen", "MyOutlineClose", "MyOutlineToggle", "MyOutlineDump", "MyOutlineHoverDebug", "MyOutlineDebug" },
     keys = {
       { "<leader>o", function() require("myoutline").toggle() end, desc = "Toggle symbol outline" },
     },

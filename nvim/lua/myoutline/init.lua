@@ -155,4 +155,26 @@ vim.api.nvim_create_user_command("MyOutlineHoverDebug", function()
   end)
 end, { desc = "myoutline: dump LSP hover at cursor + show parser output" })
 
+-- :MyOutlineDebug — dump current UI state (items count, buffer contents,
+-- window validity) to help diagnose render issues.
+vim.api.nvim_create_user_command("MyOutlineDebug", function()
+  local ui = require("myoutline.ui")
+  local s = ui._state and ui._state() or nil
+  if not s then
+    print("myoutline: UI not open")
+    return
+  end
+  print(string.format("all_items=%d  rendered_items=%d  selectable=%d  selected=%d",
+    #s.all_items, #s.rendered_items, #s.selectable_lines, s.selected_index))
+  print(string.format("windows: container=%s prompt=%s list=%s",
+    tostring(vim.api.nvim_win_is_valid(s.container_win)),
+    tostring(vim.api.nvim_win_is_valid(s.prompt_win)),
+    tostring(vim.api.nvim_win_is_valid(s.list_win))))
+  local list_lines = vim.api.nvim_buf_get_lines(s.list_buf, 0, -1, false)
+  print(string.format("list_buf: %d lines", #list_lines))
+  for i = 1, math.min(8, #list_lines) do
+    print(string.format("  [%d] %q", i, list_lines[i]))
+  end
+end, { desc = "myoutline: dump UI state for diagnostics" })
+
 return M
