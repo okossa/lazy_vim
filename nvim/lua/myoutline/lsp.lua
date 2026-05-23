@@ -22,11 +22,15 @@ local M = {}
 ---@field end_col integer
 ---@field depth integer         -- nesting depth (0 = top level)
 ---@field parent string|nil     -- parent symbol name, for display only
+---@field id integer|nil
+---@field parent_id integer|nil
 
 -- Recursive flattener for DocumentSymbol[].
 local function flatten_document_symbols(nodes, out, depth, parent)
   for _, node in ipairs(nodes or {}) do
     local sel = node.selectionRange or node.range
+    local id = #out + 1
+    local parent_name = parent and parent.name or nil
     table.insert(out, {
       name     = node.name,
       kind     = node.kind,
@@ -36,10 +40,12 @@ local function flatten_document_symbols(nodes, out, depth, parent)
       end_lnum = sel["end"].line,
       end_col  = sel["end"].character,
       depth    = depth,
-      parent   = parent,
+      parent   = parent_name,
+      id       = id,
+      parent_id = parent and parent.id or nil,
     })
     if node.children and #node.children > 0 then
-      flatten_document_symbols(node.children, out, depth + 1, node.name)
+      flatten_document_symbols(node.children, out, depth + 1, out[id])
     end
   end
 end

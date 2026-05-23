@@ -36,6 +36,9 @@ local sel_ns = vim.api.nvim_create_namespace("myoutline_selection")
 -- SymbolKinds whose `detail` is worth showing inline (method signatures).
 local KINDS_WITH_DETAIL = { [6] = true, [9] = true, [12] = true }
 
+-- Class-like containers that can own methods/properties/fields/constructors.
+local CONTAINER_KINDS = { [5] = true, [10] = true, [11] = true, [23] = true }
+
 -- Inner horizontal padding (cols) on each side of the prompt + list windows.
 local INNER_PAD_H = 2
 
@@ -90,7 +93,7 @@ end
 
 -- ---------------------------------------------------------------- grouping
 
-local function group_items(items)
+local function group_by_kind(items)
   local by_kind = {}
   for _, it in ipairs(items) do
     by_kind[it.kind] = by_kind[it.kind] or {}
@@ -99,19 +102,119 @@ local function group_items(items)
   local groups, seen = {}, {}
   for _, kind in ipairs(symbols.group_order) do
     if by_kind[kind] then
-      table.insert(groups, { kind = kind, label = symbols.get(kind).group, items = by_kind[kind] })
+      table.insert(groups, { type = "group", kind = kind, label = symbols.get(kind).group, items = by_kind[kind] })
       seen[kind] = true
     end
   end
   for kind, list in pairs(by_kind) do
     if not seen[kind] then
-      table.insert(groups, { kind = kind, label = symbols.get(kind).group, items = list })
+      table.insert(groups, { type = "group", kind = kind, label = symbols.get(kind).group, items = list })
     end
   end
   return groups
 end
 
+local function is_container(item)
+  return item and CONTAINER_KINDS[item.kind] == true
+end
+
+local function matches_query(item, query)
+  return not query or query == "" or filter.score(query, item.name) ~= nil
+end
+
+local function filtered_items(items, query)
+  if not query or query == "" then return items end
+  return filter.apply(items, query)
+end
+
+local function has_container_ancestor(item, by_id)
+  local parent_id = item.parent_id
+  while parent_id do
+    local parent = by_id[parent_id]
+    if not parent then return false end
+    if is_container(parent) then return true end
+    parent_id = parent.parent_id
+  end
+  return false
+end
+
+local function build_sections(items, query)
+  local by_id, children_by_parent = {}, {}
+  for _, item in ipairs(items) do
+    if item.id then by_id[item.id] = item end
+    if item.parent_id then
+      children_by_parent[item.parent_id] = children_by_parent[item.parent_id] or {}
+      table.insert(children_by_parent[item.parent_id], item)
+    end
+  end
+
+  local containers, globals = {}, {}
+  for _, item in ipairs(items) do
+    local inside_container = has_container_ancestor(item, by_id)
+    if is_container(item) and not inside_container then
+      table.insert(containers, item)
+    elseif not inside_container then
+      table.insert(globals, item)
+    end
+  end
+
+  if #containers == 0 then
+    return group_by_kind(filtered_items(items, query))
+  end
+
+  local sections = {}
+  for _, container in ipairs(containers) do
+    local children = children_by_parent[container.id] or {}
+    local container_matches = matches_query(container, query)
+    local visible_children
+    if not query or query == "" or container_matches then
+      visible_children = children
+    else
+      visible_children = filtered_items(children, query)
+    end
+
+    if not query or query == "" or container_matches or #visible_children > 0 then
+      table.insert(sections, {
+        type = "container",
+        item = container,
+        selectable = not query or query == "" or container_matches,
+        child_groups = group_by_kind(visible_children),
+      })
+    end
+  end
+
+  vim.list_extend(sections, group_by_kind(filtered_items(globals, query)))
+  return sections
+end
+
 -- ---------------------------------------------------------------- list build
+
+local function add_symbol_line(lines, lmap, selectable, rendered, item, indent, is_selectable)
+  if is_selectable == nil then is_selectable = true end
+  local sym = symbols.get(item.kind)
+  local pad = string.rep(" ", indent)
+  local prefix = string.format("%s%s  ", pad, sym.icon)
+  local line, detail_start
+  if KINDS_WITH_DETAIL[item.kind] and item.detail and item.detail ~= "" then
+    line = prefix .. item.name .. " " .. item.detail
+    detail_start = #prefix + #item.name + 1
+  else
+    line = prefix .. item.name
+  end
+  table.insert(lines, line)
+  table.insert(lmap, {
+    kind             = "symbol",
+    item             = item,
+    icon_hl          = sym.hl,
+    icon_start_col   = #pad,
+    name_start_col   = #prefix,
+    detail_start_col = detail_start,
+  })
+  if is_selectable then
+    table.insert(selectable, #lines)
+    table.insert(rendered, item)
+  end
+end
 
 local function build_list_lines(groups)
   local lines, lmap, selectable, rendered = {}, {}, {}, {}
@@ -127,29 +230,22 @@ local function build_list_lines(groups)
       table.insert(lines, "")
       table.insert(lmap, { kind = "blank" })
     end
-    table.insert(lines, group.label)
-    table.insert(lmap, { kind = "header", label = group.label, kind_id = group.kind })
-
-    for _, item in ipairs(group.items) do
-      local sym = symbols.get(item.kind)
-      local prefix = string.format("  %s  ", sym.icon)
-      local line, detail_start
-      if KINDS_WITH_DETAIL[item.kind] and item.detail and item.detail ~= "" then
-        line = prefix .. item.name .. " " .. item.detail
-        detail_start = #prefix + #item.name + 1
-      else
-        line = prefix .. item.name
+    if group.type == "container" then
+      add_symbol_line(lines, lmap, selectable, rendered, group.item, 0, group.selectable)
+      for _, child_group in ipairs(group.child_groups) do
+        table.insert(lines, "  " .. child_group.label)
+        table.insert(lmap, { kind = "header", label = child_group.label, kind_id = child_group.kind })
+        for _, item in ipairs(child_group.items) do
+          add_symbol_line(lines, lmap, selectable, rendered, item, 4)
+        end
       end
-      table.insert(lines, line)
-      table.insert(lmap, {
-        kind             = "symbol",
-        item             = item,
-        icon_hl          = sym.hl,
-        name_start_col   = #prefix,
-        detail_start_col = detail_start,
-      })
-      table.insert(selectable, #lines)
-      table.insert(rendered, item)
+    else
+      table.insert(lines, group.label)
+      table.insert(lmap, { kind = "header", label = group.label, kind_id = group.kind })
+
+      for _, item in ipairs(group.items) do
+        add_symbol_line(lines, lmap, selectable, rendered, item, 2)
+      end
     end
   end
   return lines, lmap, selectable, rendered
@@ -163,7 +259,7 @@ local function apply_list_highlights(buf, lmap)
       vim.api.nvim_buf_add_highlight(buf, ns, "MyOutlineGroupHeader", lnum0, 0, -1)
     elseif meta.kind == "symbol" then
       vim.api.nvim_buf_add_highlight(buf, ns, meta.icon_hl or "MyOutlineIcon",
-        lnum0, 2, meta.name_start_col)
+        lnum0, meta.icon_start_col or 2, meta.name_start_col)
       local name_end = meta.detail_start_col or -1
       vim.api.nvim_buf_add_highlight(buf, ns, "MyOutlineSymbolName",
         lnum0, meta.name_start_col, name_end)
@@ -327,8 +423,7 @@ local function refilter_and_render()
   local ok, err = pcall(function()
     normalize_prompt()
     local query = prompt_query()
-    local filtered = filter.apply(state.all_items, query)
-    local groups   = group_items(filtered)
+    local groups   = build_sections(state.all_items, query)
     local lines, lmap, selectable, rendered = build_list_lines(groups)
 
     -- Rewrite list buffer.
