@@ -16,6 +16,7 @@ local config  = require("myoutline.config")
 local symbols = require("myoutline.symbols")
 local actions = require("myoutline.actions")
 local filter  = require("myoutline.filter")
+local hover   = require("myoutline.hover")
 
 local M = {}
 
@@ -547,6 +548,27 @@ function M.open(items, source_win, source_buf)
   refilter_and_render()
   vim.api.nvim_win_set_cursor(win, { 1, 0 })
   vim.cmd("startinsert!")
+
+  -- Asynchronously upgrade method/function/constructor signatures with full
+  -- info (params + return type) via textDocument/hover. Responses arrive out
+  -- of order and over tens of ms, so we coalesce them into a single re-render
+  -- using a short debounce timer.
+  do
+    local pending_timer
+    local function schedule_rerender()
+      if pending_timer then pending_timer:stop(); pending_timer:close() end
+      pending_timer = vim.defer_fn(function()
+        pending_timer = nil
+        if state and vim.api.nvim_buf_is_valid(state.popup_buf) then
+          refilter_and_render()
+        end
+      end, 60)
+    end
+    hover.enrich(source_buf, items, KINDS_WITH_DETAIL, function(item, new_detail)
+      item.detail = new_detail
+      schedule_rerender()
+    end)
+  end
 end
 
 return M
