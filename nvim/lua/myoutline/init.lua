@@ -113,4 +113,46 @@ vim.api.nvim_create_user_command("MyOutlineOpen",   function() M.open()   end, {
 vim.api.nvim_create_user_command("MyOutlineClose",  function() M.close()  end, { desc = "myoutline: close popup" })
 vim.api.nvim_create_user_command("MyOutlineToggle", function() M.toggle() end, { desc = "myoutline: toggle popup" })
 
+-- :MyOutlineHoverDebug — fire a hover at the cursor and print raw + parsed
+-- result. Used to verify Roslyn / Pyright / tsserver hover output matches
+-- what myoutline.hover's parser expects.
+vim.api.nvim_create_user_command("MyOutlineHoverDebug", function()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local cur   = vim.api.nvim_win_get_cursor(0)
+  local params = {
+    textDocument = vim.lsp.util.make_text_document_params(bufnr),
+    position     = { line = cur[1] - 1, character = cur[2] },
+  }
+  vim.lsp.buf_request(bufnr, "textDocument/hover", params, function(err, result)
+    if err then return vim.notify("hover err: " .. vim.inspect(err), vim.log.levels.ERROR) end
+    if not result then return vim.notify("hover: nil result", vim.log.levels.WARN) end
+    print("---- raw hover.contents ----")
+    print(vim.inspect(result.contents))
+    local hover = require("myoutline.hover")
+    -- Re-use the internal extractor via a hover-shaped table.
+    local p, r = hover._parse((function()
+      local c = result.contents
+      local text
+      if type(c) == "string" then text = c
+      elseif type(c) == "table" and c.value then text = c.value
+      elseif type(c) == "table" then
+        for _, part in ipairs(c) do
+          if type(part) == "string" then text = part; break
+          elseif type(part) == "table" and part.value then text = part.value; break end
+        end
+      end
+      if not text then return "" end
+      local block = text:match("```[%w_%-]*%s*\n(.-)\n```") or text
+      for line in block:gmatch("[^\n]+") do
+        local t = line:match("^%s*(.-)%s*$")
+        if t ~= "" then return t end
+      end
+      return ""
+    end)())
+    print("---- parsed ----")
+    print(string.format("params = %s", p or "<nil>"))
+    print(string.format("return = %s", r or "<nil>"))
+  end)
+end, { desc = "myoutline: dump LSP hover at cursor + show parser output" })
+
 return M

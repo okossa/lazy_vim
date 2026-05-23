@@ -118,8 +118,9 @@ function M._parse(sig)
       end
     end
   end
-  -- "<ReturnType...> <Name>"  ->  capture everything up to last whitespace
-  local ret_cs = before:match("^(.+)%s+[%w_]+$")
+  -- "<ReturnType...> <Qualified.Name>"  — last token may contain dots
+  -- (Roslyn hover returns "decimal FeeCalculationService.CalculateFee").
+  local ret_cs = before:match("^(.+)%s+[%w_.]+$")
   if ret_cs and ret_cs ~= "" then
     return params, ret_cs:match("^%s*(.-)%s*$")
   end
