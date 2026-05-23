@@ -39,6 +39,11 @@ local KINDS_WITH_DETAIL = { [6] = true, [9] = true, [12] = true }
 -- Inner horizontal padding (cols) on each side of the prompt + list windows.
 local INNER_PAD_H = 2
 
+-- Real prompt prefix. This is intentionally real buffer text (not virtual
+-- text) so the cursor starts after the marker instead of appearing before it.
+local PROMPT_PREFIX = "> "
+local PROMPT_PREFIX_LEN = #PROMPT_PREFIX
+
 ---@class MyOutline.State
 ---@field container_buf integer
 ---@field container_win integer
@@ -174,16 +179,40 @@ end
 
 local function apply_prompt_decorations(buf)
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  local q = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
-  local prompt_vt = { { "> ", "MyOutlinePromptMark" } }
+  local line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
+  local q = line:sub(PROMPT_PREFIX_LEN + 1)
+
+  vim.api.nvim_buf_add_highlight(buf, ns, "MyOutlinePromptMark", 0, 0, PROMPT_PREFIX_LEN)
+
   if q == "" then
-    table.insert(prompt_vt, { "Type to filter symbols…", "MyOutlinePlaceholder" })
+    vim.api.nvim_buf_set_extmark(buf, ns, 0, PROMPT_PREFIX_LEN, {
+      virt_text     = { { "Type to filter symbols…", "MyOutlinePlaceholder" } },
+      virt_text_pos = "inline",
+      hl_mode       = "combine",
+    })
   end
-  vim.api.nvim_buf_set_extmark(buf, ns, 0, 0, {
-    virt_text     = prompt_vt,
-    virt_text_pos = "inline",
-    hl_mode       = "combine",
-  })
+end
+
+local function prompt_query()
+  local line = vim.api.nvim_buf_get_lines(state.prompt_buf, 0, 1, false)[1] or ""
+  return line:sub(PROMPT_PREFIX_LEN + 1)
+end
+
+local function normalize_prompt()
+  if not state or not vim.api.nvim_buf_is_valid(state.prompt_buf) then return end
+
+  local line = vim.api.nvim_buf_get_lines(state.prompt_buf, 0, 1, false)[1] or ""
+  if line:sub(1, PROMPT_PREFIX_LEN) ~= PROMPT_PREFIX then
+    local query = line:gsub("^>%s*", "")
+    vim.api.nvim_buf_set_lines(state.prompt_buf, 0, 1, false, { PROMPT_PREFIX .. query })
+  end
+
+  if vim.api.nvim_win_is_valid(state.prompt_win) then
+    local cur = vim.api.nvim_win_get_cursor(state.prompt_win)
+    if cur[2] < PROMPT_PREFIX_LEN then
+      pcall(vim.api.nvim_win_set_cursor, state.prompt_win, { 1, PROMPT_PREFIX_LEN })
+    end
+  end
 end
 
 local function apply_container_separator(buf, width)
@@ -296,7 +325,8 @@ local function refilter_and_render()
   if rerendering then return end
   rerendering = true
   local ok, err = pcall(function()
-    local query = vim.api.nvim_buf_get_lines(state.prompt_buf, 0, 1, false)[1] or ""
+    normalize_prompt()
+    local query = prompt_query()
     local filtered = filter.apply(state.all_items, query)
     local groups   = group_items(filtered)
     local lines, lmap, selectable, rendered = build_list_lines(groups)
@@ -463,8 +493,8 @@ function M.open(items, source_win, source_buf)
     vim.api.nvim_buf_set_lines(container_buf, 0, -1, false, lines)
   end
 
-  -- Prompt: single editable blank line.
-  vim.api.nvim_buf_set_lines(prompt_buf, 0, -1, false, { "" })
+  -- Prompt: marker is real text so the cursor starts visually after it.
+  vim.api.nvim_buf_set_lines(prompt_buf, 0, -1, false, { PROMPT_PREFIX })
   -- List: empty (refilter populates).
   vim.api.nvim_buf_set_lines(list_buf, 0, -1, false, {})
 
@@ -598,7 +628,7 @@ function M.open(items, source_win, source_buf)
 
   -- Initial render + enter insert mode at end of prompt.
   refilter_and_render()
-  pcall(vim.api.nvim_win_set_cursor, prompt_win, { 1, 0 })
+  pcall(vim.api.nvim_win_set_cursor, prompt_win, { 1, PROMPT_PREFIX_LEN })
   vim.cmd("startinsert!")
 
   -- Async return-type enrichment via LSP hover. Mutate item.detail in place,
